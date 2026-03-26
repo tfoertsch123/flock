@@ -2,6 +2,8 @@ package flock
 
 import (
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestLock(t *testing.T) {
@@ -24,7 +26,9 @@ func TestLock(t *testing.T) {
 	if err := l2.Unlock(); err != nil {t.Fatalf(`Unlock(.): %v`, err)}
 
 	// Should fail because l1 is sh-locked
-	if err := l2.TryLockEx(); err == nil {t.Fatalf(`TryLockEx(.): %v`, err)}
+	if err := l2.TryLockEx(); err != unix.EWOULDBLOCK {
+		t.Fatalf(`TryLockEx(.): %v`, err)
+	}
 
 	// Now unlock l1
 	if err := l1.Unlock(); err != nil {t.Fatalf(`Unlock(.): %v`, err)}
@@ -33,7 +37,9 @@ func TestLock(t *testing.T) {
 	if err := l2.LockEx(); err != nil {t.Fatalf(`LockEx(.): %v`, err)}
 
 	// should fail because l2 is locked
-	if err := l1.TryLockSh(); err == nil {t.Fatalf(`TryLockSh(.): %v`, err)}
+	if err := l1.TryLockSh(); err != unix.EWOULDBLOCK {
+		t.Fatalf(`TryLockSh(.): %v`, err)
+	}
 
 	if err := l2.Unlock(); err != nil {t.Fatalf(`Unlock(.): %v`, err)}
 

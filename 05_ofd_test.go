@@ -139,7 +139,7 @@ func TestOFD1(t *testing.T) {
 
 func TestOFD2(t *testing.T) {
 	l := New(WithPath("."))
-	if err := l.TryLockRangeEx(0, 1); err != ErrMode {
+	if err := l.TryLockRangeEx(0, 1); err != unix.EBADF {
 		t.Errorf(`TryLockRangeEx(read-only): %v`, err)
 	}
 	l = New(WithPath("."), WithRdWr())
