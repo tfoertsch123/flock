@@ -55,6 +55,10 @@
 // As a general rule, the Lock object owns the file descriptor if it has
 // opened it.
 //
+// # Thread safety
+//
+// The internal data structure is NOT protected by any means.
+//
 // [fcntl(2)]: https://man7.org/linux/man-pages/man2/fcntl.2.html
 // [flock(2)]: https://man7.org/linux/man-pages/man2/flock.2.html
 // [dup(2)]: https://man7.org/linux/man-pages/man2/dup.2.html
