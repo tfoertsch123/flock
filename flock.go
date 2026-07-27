@@ -226,28 +226,28 @@ func WithoutIntrRetry() Option {return func(o *opts){o.retryOnINTR = false}}
 //
 // It is cheap to create these objects. No syscall involved.
 func New(opt ...Option) *Lock {
-	os := &opts{
+	opts := &opts{
 		fd: -1,
 		toBeClosed: true,
 		retryOnINTR: true,
 		openMode: unix.O_RDONLY,
 	}
-	for _, o := range(opt) {o(os)}
+	for _, o := range(opt) {o(opts)}
 
-	flags := os.openMode
-	if os.create {flags |= unix.O_CREAT}
-	if os.append {flags |= unix.O_APPEND}
-	if os.truncate {flags |= unix.O_TRUNC}
-	if os.isDir {flags |= unix.O_DIRECTORY}
-	if os.closeOnExec {flags |= unix.O_CLOEXEC}
+	flags := opts.openMode
+	if opts.create {flags |= unix.O_CREAT}
+	if opts.append {flags |= unix.O_APPEND}
+	if opts.truncate {flags |= unix.O_TRUNC}
+	if opts.isDir {flags |= unix.O_DIRECTORY}
+	if opts.closeOnExec {flags |= unix.O_CLOEXEC}
 
 	return &Lock{
-		path:        os.path,
-		fd:          os.fd,
-		retryOnINTR: os.retryOnINTR,
+		path:        opts.path,
+		fd:          opts.fd,
+		retryOnINTR: opts.retryOnINTR,
 		openMode:    flags,
-		perms:       os.perms,
-		toBeClosed:  os.toBeClosed,
+		perms:       opts.perms,
+		toBeClosed:  opts.toBeClosed,
 	}
 }
 
@@ -308,7 +308,10 @@ func (l *Lock) OwningFd() bool {return l.toBeClosed}
 // File returns an [*os.File] object representing the underlying file.
 // Calling this function disowns the file descriptor. After that, the
 // [*os.File] object is responsible for closing it.
+// If the file descriptor is already closed nil is returned.
 func (l *Lock) File() *os.File {
+	if l.fd < 0 {return nil}
+
 	// From now on the os.File object owns the fd.
 	l.toBeClosed = false
 	return os.NewFile(uintptr(l.fd), l.path)

@@ -63,6 +63,8 @@ func TestOpen2(t *testing.T) {
 	// fd must still be valid. It is now owned by fh
 	checkFdValid(t, fd, true)
 
+	if l.File() != nil {t.Fatal("File() after Close() must return nil")}
+
 	if err := l.Open(); err != nil {t.Fatalf(`Open after Close(): %v`, err)}
 	if !l.toBeClosed {t.Fatal(`toBeClosed != true`)}
 	fd2 := l.Fd()

@@ -35,6 +35,7 @@ func TestCloExec1(t *testing.T) {
 	if err := l2.TryLockEx(); err == nil {t.Fatalf(`TryLockEx(.): succeeded`)}
 
 	c := make(chan string, 10)
+	ec := make(chan error, 10)
 
 	// Now we create 2 subprocesses one sleeps for 100ms the other for 300ms.
 	// Each one drops a message into the channel when done. Then we ex-lock l2.
@@ -46,8 +47,7 @@ func TestCloExec1(t *testing.T) {
 
 	t.Logf("%s: l1.fd: %d, l2.fd: %d", now(), l1.Fd(), l2.Fd())
 	go func(){
-		t.Logf("%s: waiting for l2", now())
-		if err := l2.LockEx(); err != nil {t.Fatalf(`LockEx(.): %v`, err)}
+		if err := l2.LockEx(); err != nil {ec <- err}
 		c <- "locked"
 	}()
 	go func(){
@@ -71,6 +71,8 @@ func TestCloExec1(t *testing.T) {
 			// We need to close the file without unlocking.
 			l1.Close()
 			t.Logf("%s: l1 closed", now())
+		case err := <-ec:
+			t.Fatalf(`LockEx(.): %v`, err)
 		case s := <-c:
 			t.Logf("%s: %s", now(), s)
 			if first == nil {first = &s}
@@ -96,6 +98,7 @@ func TestCloExec2(t *testing.T) {
 	if err := l2.TryLockEx(); err == nil {t.Fatalf(`TryLockEx(.): succeeded`)}
 
 	c := make(chan string, 10)
+	ec := make(chan error, 10)
 
 	// In this case we only need 1 subprocess. It sleeps for 100ms. When done
 	// a message is dropped in the channel. Then we ex-lock l2. With CLOEXEC
@@ -105,7 +108,7 @@ func TestCloExec2(t *testing.T) {
 	t.Logf("%s: l1.fd: %d, l2.fd: %d", now(), l1.Fd(), l2.Fd())
 	go func(){
 		t.Logf("%s: waiting for l2", now())
-		if err := l2.LockEx(); err != nil {t.Fatalf(`LockEx(.): %v`, err)}
+		if err := l2.LockEx(); err != nil {ec <- err}
 		c <- "locked"
 	}()
 	go func(){
@@ -125,6 +128,8 @@ func TestCloExec2(t *testing.T) {
 			// We need to close the file without unlocking.
 			l1.Close()
 			t.Logf("%s: l1 closed", now())
+		case err := <-ec:
+			t.Fatalf(`LockEx(.): %v`, err)
 		case s := <-c:
 			t.Logf("%s: %s", now(), s)
 			if first == nil {first = &s}
