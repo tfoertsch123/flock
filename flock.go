@@ -102,6 +102,7 @@ const SEEK_END int16 = unix.SEEK_END
 // A Lock represents the lock object.
 type Lock struct {
 	path        string
+	pathAt      int				// dirfd for openat
 	fd          int
 	retryOnINTR bool
 	openMode    int
@@ -111,6 +112,7 @@ type Lock struct {
 
 type opts struct {
 	path        string
+	pathAt      int				// dirfd for openat
 	fd          int
 	closeOnExec bool
 	isDir       bool
@@ -131,6 +133,10 @@ type Option func(*opts)
 // However, if no path is passed, a file descriptor number needs to
 // be provided, see [WithFd].
 func WithPath(param string) Option {return func(o *opts){o.path = param}}
+
+// WithPathAt optionally passes a directory file descriptor relative to
+// which the path passed with [WithPath] is interpreted.
+func WithPathAt(param int) Option {return func(o *opts){o.pathAt = param}}
 
 // WithFd allows you to pass an open file descriptor to the constructor [New].
 // This can be combined with [WithPath]. However, the path in this case will
@@ -227,6 +233,7 @@ func WithoutIntrRetry() Option {return func(o *opts){o.retryOnINTR = false}}
 // It is cheap to create these objects. No syscall involved.
 func New(opt ...Option) *Lock {
 	opts := &opts{
+		pathAt: unix.AT_FDCWD,
 		fd: -1,
 		toBeClosed: true,
 		retryOnINTR: true,
@@ -243,6 +250,7 @@ func New(opt ...Option) *Lock {
 
 	return &Lock{
 		path:        opts.path,
+		pathAt:      opts.pathAt,
 		fd:          opts.fd,
 		retryOnINTR: opts.retryOnINTR,
 		openMode:    flags,
@@ -287,7 +295,8 @@ var ErrAlreadyOpen error = errors.New("file is already open")
 // and the file is not yet open.
 func (l *Lock) Open() error {
 	if l.fd >= 0 {return ErrAlreadyOpen}
-	f, err := unix.Open(l.path, l.openMode, l.perms)
+
+	f, err := unix.Openat(l.pathAt, l.path, l.openMode, l.perms)
 	if err != nil {return err}
 	l.fd = f
 	l.toBeClosed = true

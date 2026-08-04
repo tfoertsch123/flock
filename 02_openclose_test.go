@@ -2,6 +2,8 @@ package flock
 
 import (
 	"os"
+	"errors"
+	"path/filepath"
 	"testing"
 	"runtime"
 	"golang.org/x/sys/unix"
@@ -97,6 +99,35 @@ func TestWithFd(t *testing.T) {
 	l1.Close()
 
 	checkFdValid(t, fd1, true)
+}
+
+func TestOpenAt(t *testing.T) {
+	dir := t.TempDir()
+	dirfh, err := os.Open(dir)
+	if err != nil {
+		t.Fatalf("Cannot open temp dir %v", err)
+	}
+
+	nm := "testlock"
+
+	l := New(WithPath(filepath.Join(dir, nm)))
+	err = l.Open()
+	if !errors.Is(err, unix.ENOENT) {
+		t.Fatalf("Expecting ENOENT, got %v", err)
+	}
+
+	l = New(WithPath(nm), WithPathAt(int(dirfh.Fd())), WithCreate())
+	err = l.Open()
+	if err != nil {
+		t.Fatalf("Cannot open lock %v", err)
+	}
+	l.Close()
+
+	l = New(WithPath(filepath.Join(dir, nm)))
+	err = l.Open()
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
 }
 
 // Local Variables:
