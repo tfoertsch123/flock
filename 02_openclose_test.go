@@ -33,17 +33,19 @@ func TestOpen1(t *testing.T) {
 	var l *Lock
 	l = New(WithPath("."))
 	if err := l.Open(); err != nil {t.Fatalf(`Open(.): %v`, err)}
-	if !l.toBeClosed {t.Fatal(`toBeClosed != true`)}
+	if l.state != Owned {t.Error(`state != Owned`)}
 
 	if err := l.Open(); err != ErrAlreadyOpen {
-		t.Fatalf(`opening the same object twice should return ErrAlreadyOpen`)
+		t.Error(`opening the same object twice should return ErrAlreadyOpen`)
 	}
 
 	fd := l.Fd()
 	checkFdValid(t, fd, true)
 
-	if err := l.Close(); err != nil {t.Fatalf("Close: %v", err)}
+	if err := l.Close(); err != nil {t.Errorf("Close: %v", err)}
 	checkFdValid(t, fd, false)
+
+	if l.state != Closed {t.Error(`state != Closed`)}
 }
 
 func TestOpen2(t *testing.T) {
@@ -52,30 +54,29 @@ func TestOpen2(t *testing.T) {
 	var l *Lock
 	l = New(WithPath("."))
 	if err := l.Open(); err != nil {t.Fatalf(`Open(.): %v`, err)}
-	if !l.toBeClosed {t.Fatal(`toBeClosed != true`)}
+	if l.state != Owned {t.Error(`state != Owned`)}
 
 	fd := l.Fd()
 	checkFdValid(t, fd, true)
 
 	fh := l.File()
-	if fh == nil {t.Fatal(`File() returns nil`)}
-	if l.toBeClosed {t.Fatal(`toBeClosed != false`)}
+	if fh == nil {t.Error(`File() returns nil`)}
+	if l.state != Borrowed {t.Error(`state != Borrowed`)}
 
-	if err := l.Close(); err != nil {t.Fatalf("Close: %v", err)}
+	if int(fh.Fd()) != fd {t.Error(`fh.Fd() != fd`)}
+
+	if err := l.Close(); err != nil {t.Errorf("Close: %v", err)}
 	// fd must still be valid. It is now owned by fh
 	checkFdValid(t, fd, true)
 
-	if l.File() != nil {t.Fatal("File() after Close() must return nil")}
+	if l.state != Closed {t.Error(`state != Closed`)}
 
-	if err := l.Open(); err != nil {t.Fatalf(`Open after Close(): %v`, err)}
-	if !l.toBeClosed {t.Fatal(`toBeClosed != true`)}
-	fd2 := l.Fd()
-	checkFdValid(t, fd2, true)
-	if err := l.Close(); err != nil {t.Fatalf("Close: %v", err)}
-	checkFdValid(t, fd2, false)
-	if fd == fd2 {
-		t.Fatal(`fd after re-open should differ b/c fd is not closed yet`)
+	if l.File() != nil {t.Error("File() after Close() must return nil")}
+
+	if err := l.Open(); !errors.Is(err, ErrAlreadyClosed) {
+		t.Errorf(`Open after Close(): %v`, err)
 	}
+	if l.state != Closed {t.Error(`state != Closed`)}
 
 	// closing the *os.File closes it finally
 	fh.Close()

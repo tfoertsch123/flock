@@ -99,6 +99,54 @@ const SEEK_SET int16 = unix.SEEK_SET
 const SEEK_CUR int16 = unix.SEEK_CUR
 const SEEK_END int16 = unix.SEEK_END
 
+// State describes the state of the lock. It regulates closing the file
+// descriptor and prevents accidental reopening.
+//
+//                   +-----------+
+//               +---+ Init      |             // not yet opened
+//               |   +-----------+
+//               |         |
+//      WithFd() |         | Open()
+//               |         V
+//               |   +-----------+
+//               |   | Owned     +---+
+//               |   +-----------+   |
+//               |         |         |
+//               |         | File()  |
+//               |         V         |
+//               |   +-----------+   |
+//               +-->| Borrowed  |   |
+//                   +-----------+   |
+//                         |         |
+//                 Close() |         | Close()
+//                         V         |
+//                   +-----------+   |
+//                   | Closed    |<--+
+//                   +-----------+
+type State uint8
+const (
+	Invalid State = iota
+	Init						// not yet opened
+	Owned						// we are responsible for closing it
+	Borrowed					// we are NOT responsible for closing it
+	Closed						// once closed, it cannot be reopened
+)
+var state2string []string = []string{
+	"Invalid",
+	"Init",
+	"Owned",
+	"Borrowed",
+	"Closed",
+}
+
+// String() returns the string representation of the state
+func (t State) String() string {
+	if int(t) >= len(state2string) {
+		return state2string[0]
+	}
+	return state2string[int(t)]
+}
+
 // A Lock represents the lock object.
 type Lock struct {
 	path        string
@@ -107,7 +155,7 @@ type Lock struct {
 	retryOnINTR bool
 	openMode    int
 	perms       uint32
-	toBeClosed  bool
+	state       State
 }
 
 type opts struct {
@@ -122,7 +170,7 @@ type opts struct {
 	append      bool
 	openMode    int
 	perms       uint32
-	toBeClosed  bool
+	state       State
 }
 
 // An Option represents an option passed to the constructor [New].
@@ -146,11 +194,13 @@ func WithPathAt(param int) Option {return func(o *opts){o.pathAt = param}}
 // [WithRdWr], [WithTruncate], ...
 //
 // Passing a negative parameter, which is an invalid file descriptor, is
-// ignored. [*Lock.Fd] will return -1.
+// ignored. [*Lock.Fd] will return -1. The state of this lock will be Closed.
 func WithFd(param int) Option {return func(o *opts){
 	if param >= 0 {
-		o.toBeClosed = false
+		o.state = Borrowed
 		o.fd = param
+	} else {
+		o.state = Closed
 	}
 }}
 
@@ -235,7 +285,7 @@ func New(opt ...Option) *Lock {
 	opts := &opts{
 		pathAt: unix.AT_FDCWD,
 		fd: -1,
-		toBeClosed: true,
+		state: Init,
 		retryOnINTR: true,
 		openMode: unix.O_RDONLY,
 	}
@@ -255,14 +305,18 @@ func New(opt ...Option) *Lock {
 		retryOnINTR: opts.retryOnINTR,
 		openMode:    flags,
 		perms:       opts.perms,
-		toBeClosed:  opts.toBeClosed,
+		state:       opts.state,
 	}
 }
 
+// ErrAlreadyClosed is returned by [*Lock.Close] if the underlying file
+// descriptor is deemed to be already closed.
+// [*Lock.Open] also returns this error on the attempt to reopen an already
+// closed lock.
+var ErrAlreadyClosed = errors.New("file is already closed")
+
 // Close closes the underlying file descriptor if it is owned by the [Lock]
-// object. It is not an error to close an already closed object. A subsequent
-// [*Lock.Open] or any of the locking functions will re-open the file
-// according to the parameters passed to [New].
+// object. Closing an already closed lock returns [ErrAlreadyClosed]
 //
 // Note, Close does NOT unlock anything prior to closing the file. So, if the
 // file descriptor is still open as in has been inherited by a child process
@@ -270,15 +324,18 @@ func New(opt ...Option) *Lock {
 //
 // [dup(2)]: https://man7.org/linux/man-pages/man2/dup.2.html
 func (l *Lock) Close() error {
-	if l.fd >= 0 && l.toBeClosed {
-		f := l.fd
-		l.fd = -1
-		l.toBeClosed = true
-		return unix.Close(f)
+	if l.state == Closed {
+		return ErrAlreadyClosed
+	}
+
+	var err error
+	if l.state == Owned {
+		err = unix.Close(l.fd)
 	}
 	l.fd = -1
-	l.toBeClosed = true
-	return nil
+	l.state = Closed
+
+	return err
 }
 
 // ErrAlreadyOpen is returned by [*Lock.Open] if the underlying file
@@ -294,12 +351,13 @@ var ErrAlreadyOpen error = errors.New("file is already open")
 // This function is called automatically when a locking function is called
 // and the file is not yet open.
 func (l *Lock) Open() error {
-	if l.fd >= 0 {return ErrAlreadyOpen}
+	if l.state == Closed {return ErrAlreadyClosed}
+	if l.state != Init {return ErrAlreadyOpen}
 
 	f, err := unix.Openat(l.pathAt, l.path, l.openMode, l.perms)
 	if err != nil {return err}
 	l.fd = f
-	l.toBeClosed = true
+	l.state = Owned
 	return nil
 }
 
@@ -312,17 +370,28 @@ func (l *Lock) Fd() int {return l.fd}
 
 // OwningFd can be used to determine if [*Lock.Close] will close the
 // underlying file descriptor.
-func (l *Lock) OwningFd() bool {return l.toBeClosed}
+func (l *Lock) OwningFd() bool {return l.state == Owned || l.state == Init}
+
+// IsClosed returns true if the lock is closed
+func (l *Lock) IsClosed() bool {return l.state == Closed}
+
+// IsOpen returns true if the underlying file descriptor is open
+// state == Owned || state == Borrowed
+func (l *Lock) IsOpen() bool {
+	return l.state == Owned || l.state == Borrowed
+}
 
 // File returns an [*os.File] object representing the underlying file.
 // Calling this function disowns the file descriptor. After that, the
 // [*os.File] object is responsible for closing it.
-// If the file descriptor is already closed nil is returned.
+// If the lock is not in Owned state, nil is returned. This prevents
+// the creation of multiple [*os.File] objects for the same open file.
+// It also prevents creating an [*os.File] for an invalid file.
 func (l *Lock) File() *os.File {
-	if l.fd < 0 {return nil}
+	if l.state != Owned {return nil}
 
 	// From now on the os.File object owns the fd.
-	l.toBeClosed = false
+	l.state = Borrowed
 	return os.NewFile(uintptr(l.fd), l.path)
 }
 

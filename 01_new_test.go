@@ -5,6 +5,28 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestState(t *testing.T) {
+	tests := []struct {
+		i State
+		s string
+	}{
+		{Invalid, "Invalid"},
+		{Init, "Init"},
+		{Owned, "Owned"},
+		{Borrowed, "Borrowed"},
+		{Closed, "Closed"},
+	}
+
+	for _, x := range tests {
+		if x.i.String() != x.s {
+			t.Errorf(`State(%d), exp: %s`, x.i, x.s)
+		}
+	}
+	if State(len(tests)).String() != "Invalid" {
+		t.Error(`State(>max).String() != "Invalid"`)
+	}
+}
+
 func TestNewEmpty(t *testing.T) {
 	var l *Lock
 	l = New()
@@ -14,8 +36,10 @@ func TestNewEmpty(t *testing.T) {
 	if !l.retryOnINTR {t.Error(`New().retryOnINTR != true`)}
 	if l.openMode != unix.O_RDONLY {t.Error(`New().openMode != O_RDONLY`)}
 	if l.perms != 0 {t.Error(`New().perms != 0`)}
-	if !l.toBeClosed {t.Error(`New().toBeClosed != true`)}
+	if l.state != Init {t.Error(`New().state != Init`)}
 	if !l.OwningFd() {t.Error(`New().OwningFd() != true`)}
+	if l.IsOpen() {t.Error(`New().IsOpen() != false`)}
+	if l.IsClosed() {t.Error(`New().IsClosed() != false`)}
 }
 
 func TestNewAllOpenModifiers(t *testing.T) {
@@ -66,8 +90,10 @@ func TestNewPathFd(t *testing.T) {
 	if l.retryOnINTR {t.Error(`retryOnINTR != false`)}
 	if l.path != "." {t.Error(`path != "."`)}
 	if l.fd != 15 {t.Error(`fd != 15`)}
-	if l.toBeClosed {t.Error(`toBeClosed != false`)}
+	if l.state != Borrowed {t.Error(`state != Borrowed`)}
 	if l.OwningFd() {t.Error(`OwningFd() != false`)}
+	if !l.IsOpen() {t.Error(`IsOpen() != true`)}
+	if l.IsClosed() {t.Error(`IsClosed() != false`)}
 	if l.Path() != "." {t.Error(`Path() != "."`)}
 	if l.Fd() != 15 {t.Error(`Fd() != 15`)}
 
@@ -75,7 +101,7 @@ func TestNewPathFd(t *testing.T) {
 		WithFd(-15),
 	)
 	if l.fd != -1 {t.Fatal(`WithFd(<0) is invalid`)}
-	if !l.toBeClosed {t.Fatal(`toBeClosed != true`)}
+	if l.state != Closed {t.Fatal(`state != Closed`)}
 }
 
 // Local Variables:
